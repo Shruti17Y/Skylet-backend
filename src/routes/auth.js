@@ -11,6 +11,7 @@ const generateToken = (user) => {
     {
       id: user.id,
       role_id: user.role_id,
+      role_name: user.role_name,
       email: user.email,
       full_name: user.full_name,
     },
@@ -24,7 +25,6 @@ router.post('/register', async (req, res, next) => {
   try {
     const { full_name, birth_date, email, password, state, whatsapp_number } = req.body;
 
-    // Validation checks
     if (!full_name || !full_name.trim()) {
       return res.status(400).json({ success: false, message: 'Full Name cannot be empty.' });
     }
@@ -64,13 +64,14 @@ router.post('/register', async (req, res, next) => {
 
     // Insert user (role_id 1 = customer)
     const newUserResult = await db.query(
-      `INSERT INTO users (role_id, full_name, email, password_hash, birth_date, state, whatsapp_number)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO users (role_id, full_name, email, password_hash, birth_date, state, whatsapp_number, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true)
        RETURNING id, role_id, full_name, email, birth_date, state, whatsapp_number, created_at`,
       [1, full_name.trim(), normalizedEmail, passwordHash, birth_date, state.trim(), whatsapp_number.trim()]
     );
 
     const user = newUserResult.rows[0];
+    user.role_name = 'customer';
 
     // Create persistent cart for user
     await db.query('INSERT INTO carts (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING', [user.id]);
@@ -81,8 +82,8 @@ router.post('/register', async (req, res, next) => {
        VALUES ($1, $2, $3, $4)`,
       [
         user.id,
-        'Welcome to VoltCraft Electrical Systems!',
-        'Your account has been registered successfully. Explore categories, select product quantities, and place bulk orders.',
+        'Welcome to Skylet Electrical Systems!',
+        'Your customer account has been registered successfully. Explore categories, select product quantities, and place bulk orders.',
         '/categories',
       ]
     );
@@ -96,6 +97,7 @@ router.post('/register', async (req, res, next) => {
       user: {
         id: user.id,
         role_id: user.role_id,
+        role_name: user.role_name,
         full_name: user.full_name,
         email: user.email,
         birth_date: user.birth_date,
@@ -119,10 +121,13 @@ router.post('/login', async (req, res, next) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Query user
+    // Query user with role_name and active status check
     const result = await db.query(
-      `SELECT id, role_id, full_name, email, password_hash, birth_date, state, whatsapp_number
-       FROM users WHERE LOWER(email) = $1`,
+      `SELECT u.id, u.role_id, r.name AS role_name, u.full_name, u.email, u.password_hash,
+              u.birth_date, u.state, u.whatsapp_number, u.is_active
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE LOWER(u.email) = $1`,
       [normalizedEmail]
     );
 
@@ -132,14 +137,21 @@ router.post('/login', async (req, res, next) => {
 
     const user = result.rows[0];
 
+    // Check account active state
+    if (!user.is_active) {
+      return res.status(403).json({ success: false, message: 'Your account has been deactivated. Access denied.' });
+    }
+
     // Verify password
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
-    // Ensure cart exists
-    await db.query('INSERT INTO carts (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING', [user.id]);
+    // Ensure cart exists for customer accounts
+    if (user.role_id === 1) {
+      await db.query('INSERT INTO carts (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING', [user.id]);
+    }
 
     const token = generateToken(user);
 
@@ -150,6 +162,7 @@ router.post('/login', async (req, res, next) => {
       user: {
         id: user.id,
         role_id: user.role_id,
+        role_name: user.role_name,
         full_name: user.full_name,
         email: user.email,
         birth_date: user.birth_date,
@@ -171,8 +184,10 @@ router.post('/logout', (req, res) => {
 router.get('/me', verifyToken, async (req, res, next) => {
   try {
     const result = await db.query(
-      `SELECT id, role_id, full_name, email, birth_date, state, whatsapp_number, created_at
-       FROM users WHERE id = $1`,
+      `SELECT u.id, u.role_id, r.name AS role_name, u.full_name, u.email, u.birth_date, u.state, u.whatsapp_number, u.created_at
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE u.id = $1`,
       [req.user.id]
     );
 
