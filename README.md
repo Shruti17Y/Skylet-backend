@@ -21,7 +21,7 @@ Make sure you have the following installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone <YOUR_BACKEND_REPOSITORY_URL>
+git clone git@github.com:Shruti17Y/Skylet-backend.git
 ```
 
 ### 2. Open the Project Directory
